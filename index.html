@@ -269,7 +269,7 @@ hr.divider {
   to { top: 200%; }
 }
 .video-inner video {
-  width: 100%; height: 100%; object-fit: cover;
+  width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0;
 }
 .video-play-btn {
   width: 52px; height: 52px; border-radius: 50%;
@@ -278,15 +278,11 @@ hr.divider {
   font-size: 1.2rem; color: white;
   box-shadow: 0 0 30px rgba(200,136,42,0.5);
   transition: transform 0.2s, box-shadow 0.2s;
-  z-index: 1;
+  z-index: 10;
 }
 .video-inner:hover .video-play-btn {
   transform: scale(1.1);
   box-shadow: 0 0 50px rgba(200,136,42,0.7);
-}
-.video-placeholder-text {
-  font-size: 0.75rem; color: rgba(245,240,232,0.4);
-  z-index: 1; text-align: center; padding: 0 1rem;
 }
 .video-label {
   padding: 0.7rem 1rem;
@@ -404,7 +400,6 @@ footer .footer-title {
 </head>
 <body>
 
-<!-- ── NAV ── -->
 <nav>
   <div class="nav-brand"><em>Tex</em>Trojan</div>
   <ul class="nav-links">
@@ -415,7 +410,6 @@ footer .footer-title {
   </ul>
 </nav>
 
-<!-- ── HERO ── -->
 <div class="hero">
   <div class="hero-inner">
     <div class="venue-tag">⚠ Adversarial ML · VLA Security</div>
@@ -430,13 +424,11 @@ footer .footer-title {
     <div class="btn-row">
       <a href="#" class="btn btn-solid">📄 Paper</a>
       <a href="#" class="btn btn-ghost">𝕏 arXiv</a>
-      <a href="#" class="btn btn-ghost">💻 Code</a>
-      <a href="#" class="btn btn-ghost">🗂 Dataset</a>
+      <a href="https://github.com/jj0004whitegmn-maker/textrojan" class="btn btn-ghost" target="_blank">💻 Code</a>
     </div>
   </div>
 </div>
 
-<!-- ── ABSTRACT ── -->
 <section class="sec" id="abstract">
   <div class="sec-rule reveal"><span>Abstract</span></div>
   <div class="abstract-box reveal">
@@ -450,7 +442,6 @@ footer .footer-title {
 
 <hr class="divider">
 
-<!-- ── METHOD ── -->
 <section class="sec" id="method">
   <div class="sec-rule reveal"><span>Key Contributions</span></div>
   <h2 class="reveal">Two novel components power TexTrojan</h2>
@@ -480,12 +471,11 @@ footer .footer-title {
 
 <hr class="divider">
 
-<!-- ── DEMO VIDEOS ── -->
 <section class="sec" id="demo">
   <div class="sec-rule reveal"><span>Simulation Setup &amp; Demo</span></div>
   <h2 class="reveal">Attack demonstrations across LIBERO tasks</h2>
   <p class="sec-body reveal" style="margin-bottom:2rem;">
-    We evaluate on four LIBERO task suites: <em>Spatial</em>, <em>Object</em>, <em>Goal</em>, and <em>LIBERO-10 (Long)</em>. Each panel below shows side-by-side clean vs. attacked robot behavior. Replace the placeholders with your <code>.mp4</code> files.
+    We evaluate on four LIBERO task suites: <em>Spatial</em>, <em>Object</em>, <em>Goal</em>, and <em>LIBERO-10 (Long)</em>. Each panel below shows side-by-side clean vs. attacked robot behavior.
   </p>
 
   <div class="demo-tabs reveal">
@@ -498,12 +488,10 @@ footer .footer-title {
 
   <div class="video-grid reveal" id="videoGrid">
 
-    <!-- Panel A: LIBERO-Spatial -->
     <div class="video-panel" data-task="spatial">
       <div class="video-inner" id="vp-spatial-clean">
-        <!-- Replace src with your video: <video src="videos/spatial_clean.mp4" loop muted playsinline></video> -->
+        <video src="videos/spatial_clean.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">spatial_clean.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(a) LIBERO-Spatial</span>
@@ -513,8 +501,8 @@ footer .footer-title {
 
     <div class="video-panel" data-task="spatial">
       <div class="video-inner" id="vp-spatial-attack">
+        <video src="videos/spatial_textrojan.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">spatial_textrojan.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(a) LIBERO-Spatial</span>
@@ -522,11 +510,10 @@ footer .footer-title {
       </div>
     </div>
 
-    <!-- Panel B: LIBERO-Object -->
     <div class="video-panel" data-task="object">
       <div class="video-inner">
+        <video src="videos/object_clean.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">object_clean.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(b) LIBERO-Object</span>
@@ -536,8 +523,8 @@ footer .footer-title {
 
     <div class="video-panel" data-task="object">
       <div class="video-inner">
+        <video src="videos/object_textrojan.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">object_textrojan.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(b) LIBERO-Object</span>
@@ -545,11 +532,10 @@ footer .footer-title {
       </div>
     </div>
 
-    <!-- Panel C: LIBERO-Goal -->
     <div class="video-panel" data-task="goal">
       <div class="video-inner">
+        <video src="videos/goal_clean.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">goal_clean.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(c) LIBERO-Goal</span>
@@ -559,8 +545,8 @@ footer .footer-title {
 
     <div class="video-panel" data-task="goal">
       <div class="video-inner">
+        <video src="videos/goal_textrojan.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">goal_textrojan.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(c) LIBERO-Goal</span>
@@ -568,11 +554,10 @@ footer .footer-title {
       </div>
     </div>
 
-    <!-- Panel D: LIBERO-10 Long -->
     <div class="video-panel" data-task="long">
       <div class="video-inner">
+        <video src="videos/long_clean.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">long_clean.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(d) LIBERO-10 (Long)</span>
@@ -582,8 +567,8 @@ footer .footer-title {
 
     <div class="video-panel" data-task="long">
       <div class="video-inner">
+        <video src="videos/long_textrojan.mp4" loop muted playsinline></video>
         <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-        <div class="video-placeholder-text">long_textrojan.mp4</div>
       </div>
       <div class="video-label">
         <span class="video-label-name">(d) LIBERO-10 (Long)</span>
@@ -591,15 +576,10 @@ footer .footer-title {
       </div>
     </div>
 
-  </div><!-- /video-grid -->
-  <p style="font-size:0.78rem;color:var(--muted);margin-top:1rem;">
-    💡 To add your videos: replace each <code>&lt;div class="video-inner"&gt;</code> placeholder with <code>&lt;video src="your_file.mp4" loop muted playsinline&gt;&lt;/video&gt;</code>
-  </p>
-</section>
+  </div></section>
 
 <hr class="divider">
 
-<!-- ── RESULTS ── -->
 <section class="sec" id="results">
   <div class="sec-rule reveal"><span>Experimental Results</span></div>
   <h2 class="reveal">Task Failure Rates (%) on LIBERO Benchmark</h2>
@@ -623,7 +603,6 @@ footer .footer-title {
       </thead>
       <tbody>
 
-        <!-- OpenVLA -->
         <tr class="model-group-row"><td colspan="14">OpenVLA [17]</td></tr>
         <tr>
           <td></td><td>Spatial</td>
@@ -651,7 +630,6 @@ footer .footer-title {
           <td>24.1</td><td>31.1</td><td>76.1</td><td>79.9</td><td>86.6</td><td class="val-best">90.5</td>
         </tr>
 
-        <!-- OpenVLA-OFT -->
         <tr class="model-group-row group-divider"><td colspan="14">OpenVLA-OFT [16]</td></tr>
         <tr>
           <td></td><td>Spatial</td>
@@ -679,7 +657,6 @@ footer .footer-title {
           <td>4.7</td><td>6.5</td><td>67.0</td><td>70.6</td><td>74.4</td><td class="val-best">77.4</td>
         </tr>
 
-        <!-- π₀ -->
         <tr class="model-group-row group-divider"><td colspan="14">π₀ [2]</td></tr>
         <tr>
           <td></td><td>Spatial</td>
@@ -707,7 +684,6 @@ footer .footer-title {
           <td>4.6</td><td>10.7</td><td>56.2</td><td>60.6</td><td>67.3</td><td class="val-best">73.3</td>
         </tr>
 
-        <!-- π₀.₅ -->
         <tr class="model-group-row group-divider"><td colspan="14">π₀.₅ [11]</td></tr>
         <tr>
           <td></td><td>Spatial</td>
@@ -750,7 +726,6 @@ footer .footer-title {
   </p>
 </section>
 
-<!-- ── FOOTER ── -->
 <footer>
   <p class="footer-title">TexTrojan</p>
   <p>Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models</p>
@@ -781,7 +756,7 @@ function switchTab(btn, task) {
   });
 }
 
-// ── Fake play toggle (replace with real video logic when you have files) ──
+// ── Play toggle logic ──
 function toggleVideo(btn) {
   const inner = btn.closest('.video-inner');
   const vid = inner.querySelector('video');
