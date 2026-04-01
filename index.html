@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tex3D — Adversarial 3D Textures for VLA Models</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;1,8..60,300;1,8..60,400&display=swap" rel="stylesheet">
+
 <style>
 /* ─────────────────────────────────────────
    DESIGN SYSTEM  — editorial dark / amber
@@ -25,7 +25,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; font-size: 16px; }
 body {
-  font-family: 'Source Serif 4', Georgia, serif;
+  font-family: 'Source Serif 4', 'Noto Serif', Georgia, 'Times New Roman', serif;
   background: var(--paper);
   color: var(--ink);
   line-height: 1.72;
@@ -42,7 +42,7 @@ nav {
   border-bottom: 1px solid var(--border);
 }
 .nav-brand {
-  font-family: 'Playfair Display', serif;
+  font-family: 'Playfair Display', 'Georgia', 'Times New Roman', serif;
   font-size: 1.05rem; font-weight: 700;
   letter-spacing: 0.04em; color: var(--ink);
 }
@@ -97,7 +97,7 @@ nav {
   animation: fadeUp 0.5s ease both;
 }
 .hero h1 {
-  font-family: 'Playfair Display', serif;
+  font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
   font-size: clamp(2rem, 5vw, 3.6rem);
   font-weight: 900; line-height: 1.15;
   color: var(--ink);
@@ -159,7 +159,7 @@ nav {
   white-space: nowrap;
 }
 .sec h2 {
-  font-family: 'Playfair Display', serif;
+  font-family: 'Playfair Display', Georgia, 'Times New Roman', serif;
   font-size: clamp(1.6rem, 3vw, 2.4rem);
   font-weight: 700; line-height: 1.25;
   margin-bottom: 1rem; color: var(--ink);
@@ -234,6 +234,13 @@ hr.divider {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1.5rem;
+}
+.video-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+@media (max-width: 900px) {
+  .video-grid-4 { grid-template-columns: repeat(2, 1fr); }
 }
 @media (min-width: 700px) {
   .video-grid { grid-template-columns: repeat(2, 1fr); }
@@ -478,7 +485,59 @@ footer .footer-title {
     We evaluate on four LIBERO task suites: <em>Spatial</em>, <em>Object</em>, <em>Goal</em>, and <em>LIBERO-10 (Long)</em>. Each panel below shows side-by-side clean vs. attacked robot behavior.
   </p>
 
-  <div class="video-grid reveal" id="videoGrid">
+  <!-- LIBERO-Spatial row -->
+  <p class="sec-body reveal" style="margin-bottom:0.8rem;font-weight:600;color:var(--amber);">LIBERO-Spatial</p>
+  <div class="video-grid video-grid-4 reveal" style="margin-bottom:2.4rem;">
+
+    <div class="video-panel">
+      <div class="video-inner">
+        <video src="video/spatial/adv/2026_03_09-18_46_32--episode=5--success=False--task=pick_up_the_black_bowl_from_table_center_and_place.mp4" loop muted playsinline></video>
+        <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
+      </div>
+      <div class="video-label">
+        <span class="video-label-name">Black bowl from table center</span>
+        <span class="video-label-badge badge-attack">Tex3D</span>
+      </div>
+    </div>
+
+    <div class="video-panel">
+      <div class="video-inner">
+        <video src="video/spatial/adv/2026_03_09-18_46_32--episode=12--success=False--task=pick_up_the_black_bowl_on_the_ramekin_and_place_it.mp4" loop muted playsinline></video>
+        <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
+      </div>
+      <div class="video-label">
+        <span class="video-label-name">Black bowl on the ramekin</span>
+        <span class="video-label-badge badge-attack">Tex3D</span>
+      </div>
+    </div>
+
+    <div class="video-panel">
+      <div class="video-inner">
+        <video src="video/spatial/adv/2026_03_09-18_46_32--episode=15--success=False--task=pick_up_the_black_bowl_on_the_stove_and_place_it_o.mp4" loop muted playsinline></video>
+        <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
+      </div>
+      <div class="video-label">
+        <span class="video-label-name">Black bowl on the stove</span>
+        <span class="video-label-badge badge-attack">Tex3D</span>
+      </div>
+    </div>
+
+    <div class="video-panel">
+      <div class="video-inner">
+        <video src="video/spatial/adv/2026_03_09-18_46_32--episode=20--success=False--task=pick_up_the_black_bowl_on_the_wooden_cabinet_and_p.mp4" loop muted playsinline></video>
+        <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
+      </div>
+      <div class="video-label">
+        <span class="video-label-name">Black bowl on the wooden cabinet</span>
+        <span class="video-label-badge badge-attack">Tex3D</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- LIBERO-Object row -->
+  <p class="sec-body reveal" style="margin-bottom:0.8rem;font-weight:600;color:var(--amber);">LIBERO-Object</p>
+  <div class="video-grid video-grid-4 reveal" id="videoGrid">
 
     <div class="video-panel">
       <div class="video-inner">
@@ -520,28 +579,6 @@ footer .footer-title {
       </div>
       <div class="video-label">
         <span class="video-label-name">Pick up the cream cheese</span>
-        <span class="video-label-badge badge-attack">Tex3D</span>
-      </div>
-    </div>
-
-    <div class="video-panel">
-      <div class="video-inner">
-        <video src="video/object/adv/2026_03_21-11_03_05--episode=1--success=False--task=pick_up_the_orange_juice_and_place_it_in_the_baske.mp4" loop muted playsinline></video>
-        <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-      </div>
-      <div class="video-label">
-        <span class="video-label-name">Pick up the orange juice</span>
-        <span class="video-label-badge badge-attack">Tex3D</span>
-      </div>
-    </div>
-
-    <div class="video-panel">
-      <div class="video-inner">
-        <video src="video/object/adv/2026_03_21-11_08_15--episode=1--success=False--task=pick_up_the_butter_and_place_it_in_the_basket.mp4" loop muted playsinline></video>
-        <div class="video-play-btn" onclick="toggleVideo(this)">▶</div>
-      </div>
-      <div class="video-label">
-        <span class="video-label-name">Pick up the butter</span>
         <span class="video-label-badge badge-attack">Tex3D</span>
       </div>
     </div>
