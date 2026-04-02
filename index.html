@@ -129,9 +129,18 @@ sup.author-mark {
 }
 .author-note sup { color: var(--amber); font-size: 0.85em; }
 
+sup.affil-num {
+  font-size: 0.65em;
+  color: var(--amber);
+  vertical-align: super;
+  line-height: 0;
+  font-style: normal;
+}
+
 .hero-affil {
   font-size: 0.82rem; color: var(--muted); margin-bottom: 2.4rem;
   animation: fadeUp 0.6s 0.25s ease both;
+  line-height: 2;
 }
 .btn-row {
   display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center;
@@ -458,19 +467,25 @@ footer .footer-home {
       <span class="highlight">Tex3D</span>: Objects as Attack Surfaces via<br>
       Adversarial 3D Textures for<br>Vision-Language-Action Models
     </h1>
-    <!-- Change 1: Authors with co-first (*) and corresponding (†) markers -->
     <p class="hero-authors">
-      Jiawei Chen<sup class="author-mark">*</sup>,
-      Simin Huang<sup class="author-mark">*</sup>,
-      Jiawei Du<sup class="author-mark">†</sup>,
-      Shuaihang Chen,
-      Yu Tian,
-      Mingjie Wei,
-      Chao Yu,
-      Zhaoxia Yin<sup class="author-mark">†</sup>
+      Jiawei Chen<sup class="author-mark">*,1,2</sup>,
+      Simin Huang<sup class="author-mark">*,1</sup>,
+      Jiawei Du<sup class="author-mark">3</sup>,
+      Shuaihang Chen<sup class="author-mark">2</sup>,
+      Yu Tian<sup class="author-mark">4</sup>,
+      Mingjie Wei<sup class="author-mark">2</sup>,
+      Chao Yu<sup class="author-mark">†,4</sup>,
+      Zhaoxia Yin<sup class="author-mark">†,1</sup>
     </p>
-    <p class="author-note"><sup>*</sup> Equal contribution &nbsp;&nbsp; <sup>†</sup> Corresponding authors</p>
-    <p class="hero-affil">East China Normal University (ECNU)</p>
+    <p class="author-note">
+      <sup>*</sup> Equal contribution &nbsp;&nbsp; <sup>†</sup> Corresponding authors
+    </p>
+    <p class="hero-affil">
+      <sup class="affil-num">1</sup> East China Normal University &nbsp;&nbsp;
+      <sup class="affil-num">2</sup> Zhongguancun Academy &nbsp;&nbsp;
+      <sup class="affil-num">3</sup> CFAR, A*STAR, Singapore &nbsp;&nbsp;
+      <sup class="affil-num">4</sup> Tsinghua University
+    </p>
     <div class="btn-row">
       <a href="." class="btn btn-solid">🏠 Project</a>
       <a href="#" class="btn btn-ghost">📄 Paper</a>
@@ -914,10 +929,10 @@ footer .footer-home {
   <p class="footer-title">Tex3D</p>
   <p>Objects as Attack Surfaces via Adversarial 3D Textures for Vision-Language-Action Models</p>
   <br>
-  <p>Questions? <a href="mailto:s-cjw24@bza.edu.cn">s-cjw24@bza.edu.cn</a> &nbsp;·&nbsp; <a href="https://github.com/jj0004whitegmn-maker/tex3d" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="#">arXiv</a></p>
+  <p>Questions? <a href="/cdn-cgi/l/email-protection#fc8fd19f968bcec8bc9e869dd2999889d29f92"><span class="__cf_email__" data-cfemail="91e2bcf2fbe6a3a5d1f3ebf0bff4f5e4bff2ff">[email&#160;protected]</span></a> &nbsp;·&nbsp; <a href="https://github.com/jj0004whitegmn-maker/tex3d" target="_blank">GitHub</a> &nbsp;·&nbsp; <a href="#">arXiv</a></p>
 </footer>
 
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 // ── Scroll reveal ──
 const obs = new IntersectionObserver(entries => {
   entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
@@ -948,15 +963,4 @@ document.querySelectorAll('.video-inner video').forEach(vid => {
     if (btn) { btn.classList.remove('hidden'); btn.textContent = '▶'; }
   });
   vid.addEventListener('click', () => {
-    const inner = vid.closest('.video-inner');
-    const btn = inner.querySelector('.video-play-btn');
-    if (!vid.paused) {
-      vid.pause();
-      if (btn) { btn.classList.remove('hidden'); btn.textContent = '▶'; }
-    }
-  });
-});
-</script>
-
-</body>
-</html>
+    const inner = vid.c
