@@ -841,7 +841,7 @@ def evaluate_adversarial_policy(env, policy, renderer, task_description,
 
 @dataclass
 class GenerateConfig:
-    pretrained_checkpoint: str = "/path/to/checkpoints/pi05_libero_pytorch"
+    pretrained_checkpoint: str = "/path/to/checkpoints/pi0_libero_pytorch"
 
     object_name:           str          = "akita_black_bowl"
     override_mesh_path:    Optional[str] = None
@@ -881,8 +881,8 @@ def run_whitebox_attack(cfg: GenerateConfig):
     scale_xyz = parse_mesh_scale(xml_path)
     print(f"[配置] mesh scale (from xml): {scale_xyz}")
 
-    print(f"\n加载 Pi0.5 checkpoint: {cfg.pretrained_checkpoint}")
-    config = training_config.get_config("pi05_libero")
+    print(f"\n加载 Pi0 checkpoint: {cfg.pretrained_checkpoint}")
+    config = training_config.get_config("pi0_libero")
     import torch._dynamo
     torch._dynamo.reset()
     torch._dynamo.config.disable = True
