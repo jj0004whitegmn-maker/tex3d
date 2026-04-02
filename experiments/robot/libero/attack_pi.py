@@ -20,7 +20,7 @@ import trimesh
 import nvdiffrast.torch as dr
 import draccus
 
-PATH_TO_LIBERO_ROOT = "/home/dataset-assist-0/chenjiawei/hsm/dataset/LIBERO-exp2"
+PATH_TO_LIBERO_ROOT = "/path/to/LIBERO"
 if PATH_TO_LIBERO_ROOT not in sys.path:
     sys.path.append(PATH_TO_LIBERO_ROOT)
 
@@ -35,14 +35,8 @@ try:
 except ImportError:
     raise ImportError("请确保已在 openpi 环境下运行此脚本")
 
-ASSET_ROOT_SCANNED = (
-    "/home/dataset-assist-0/chenjiawei/hsm/dataset/LIBERO-openvla-exp"
-    "/libero/libero/assets/stable_scanned_objects"
-)
-ASSET_ROOT_HOPE = (
-    "/home/dataset-assist-0/chenjiawei/hsm/dataset/LIBERO-master"
-    "/libero/libero/assets/stable_hope_objects"
-)
+ASSET_ROOT_SCANNED = "/path/to/LIBERO/libero/libero/assets/stable_scanned_objects"
+ASSET_ROOT_HOPE    = "/path/to/LIBERO/libero/libero/assets/stable_hope_objects"
 
 
 def _scanned(name, mesh_file=None, tex_file="texture.png"):
@@ -134,7 +128,6 @@ OBJECTS = {
 
 
 def parse_mesh_scale(xml_path: str) -> List[float]:
-    """从 XML 中读取 mesh scale，返回 [sx, sy, sz]。"""
     tree = ET.parse(xml_path)
     root = tree.getroot()
     for mesh_elem in root.findall(".//mesh"):
@@ -286,11 +279,7 @@ class DifferentiableRenderer(nn.Module):
         self.register_buffer("pos",   torch.from_numpy(vertices.astype(np.float32)).to(device))
         self.register_buffer("faces", torch.from_numpy(mesh.faces.astype(np.int32)).to(device))
 
-        # UV
         if hasattr(mesh.visual, "uv") and mesh.visual.uv is not None and len(mesh.visual.uv) > 0:
-            # UV V 轴不做翻转：nvdiffrast 期望 V=0 在底部，OBJ 文件导出的 UV 通常
-            # 已经是 V=0 在底部的约定，通过加载纹理时 FLIP_TOP_BOTTOM 来对齐，
-            # 而不是翻转 UV 坐标本身（两者只能选一个，同时做会相互抵消）。
             uv = mesh.visual.uv.astype(np.float32)
             self.register_buffer("uv", torch.from_numpy(uv).to(device))
             if (hasattr(mesh.visual, "face_uv") and mesh.visual.face_uv is not None
@@ -319,9 +308,6 @@ class DifferentiableRenderer(nn.Module):
 
         self.glctx = dr.RasterizeCudaContext()
         if orig_texture_path and os.path.exists(orig_texture_path):
-            # nvdiffrast 纹理坐标原点在左下角（V 轴朝上），PIL 原点在左上角（V 轴朝下）。
-            # 加载时做 FLIP_TOP_BOTTOM，使内存中的纹理与 nvdiffrast UV 坐标系对齐，
-            # 渲染采样结果正确；烘焙导出时同样是翻转状态，与 MuJoCo 期望一致。
             img = (Image.open(orig_texture_path).convert("RGB")
                         .resize((self.texture_res, self.texture_res))
                         .transpose(Image.FLIP_TOP_BOTTOM))
@@ -345,13 +331,13 @@ class DifferentiableRenderer(nn.Module):
         pos_homo = torch.cat([pos, torch.ones_like(pos[..., :1])], dim=-1)
         pos_clip = torch.matmul(pos_homo, mvp.t())
 
-        rast, _       = dr.rasterize(self.glctx, pos_clip.unsqueeze(0), self.faces, resolution=resolution)
-        tex_uv, _     = dr.interpolate(self.uv.unsqueeze(0), rast, self.uv_idx)
-        clean_color   = dr.texture(self.orig_texture.contiguous(), tex_uv.contiguous(), filter_mode="linear")
+        rast, _         = dr.rasterize(self.glctx, pos_clip.unsqueeze(0), self.faces, resolution=resolution)
+        tex_uv, _       = dr.interpolate(self.uv.unsqueeze(0), rast, self.uv_idx)
+        clean_color     = dr.texture(self.orig_texture.contiguous(), tex_uv.contiguous(), filter_mode="linear")
 
-        noise         = torch.tanh(self.adv_vc_noise) * self.epsilon
+        noise           = torch.tanh(self.adv_vc_noise) * self.epsilon
         noise_interp, _ = dr.interpolate(noise.unsqueeze(0).contiguous(), rast, self.faces)
-        adv_color     = torch.clamp(clean_color + noise_interp, 0.0, 1.0)
+        adv_color       = torch.clamp(clean_color + noise_interp, 0.0, 1.0)
 
         vn_interp, _ = dr.interpolate(self.vn.unsqueeze(0), rast, self.faces)
         vn_interp    = F.normalize(vn_interp, p=2, dim=-1)
@@ -370,17 +356,14 @@ class DifferentiableRenderer(nn.Module):
                                   torch.ones_like(uv_clip[..., :1])], dim=-1)
             rast, _ = dr.rasterize(self.glctx, uv4.unsqueeze(0), self.uv_idx,
                                     resolution=(self.texture_res, self.texture_res))
-            noise   = torch.tanh(self.adv_vc_noise) * self.epsilon
+            noise    = torch.tanh(self.adv_vc_noise) * self.epsilon
             baked, _ = dr.interpolate(noise.unsqueeze(0).contiguous(), rast, self.faces)
-            mask    = (rast[..., 3] > 0).float().unsqueeze(-1)
-            result = torch.clamp(self.orig_texture + baked * mask, 0.0, 1.0)
-            # orig_texture 在内存中是 FLIP_TOP_BOTTOM 状态（nvdiffrast 坐标系）。
-            # 导出给 MuJoCo 前需要翻转回来，使其与原始 texture.png 方向一致。
+            mask     = (rast[..., 3] > 0).float().unsqueeze(-1)
+            result   = torch.clamp(self.orig_texture + baked * mask, 0.0, 1.0)
             return torch.flip(result, dims=[1])
 
 
 def hide_object_geoms(sim, search_keywords_list: List[List[str]]):
-    """隐藏与 search_keywords_list 匹配的 geom（alpha→0）。"""
     hidden = []
     for i in range(sim.model.ngeom):
         try:
@@ -403,7 +386,6 @@ def restore_object_geoms(sim, hidden):
 
 
 def find_object_tex_id(sim, search_keywords_list: List[List[str]]):
-    """通用版：按关键词匹配 tex/mat 名称，返回 tex_id。"""
     for i in range(sim.model.ntex):
         name = None
         try:
@@ -428,27 +410,17 @@ def find_object_tex_id(sim, search_keywords_list: List[List[str]]):
     return -1
 
 
-
 def render_hires(renderer, bg_tensor, mvp, hires=1024, render_res=256):
-    """
-    用高分辨率重新渲染并合成，仅用于保存可视化图片，不影响攻击梯度。
-    bg_tensor 是 [1,3,render_res,render_res] 的低分辨率背景，
-    会先双线性上采样到 hires 再合成。
-    """
-    import torch.nn.functional as F
     if mvp is None:
         return bg_tensor
     bg_hires = F.interpolate(bg_tensor, size=(hires, hires), mode="bilinear", align_corners=False)
     adv_rgba, mask = renderer.render(mvp, resolution=(hires, hires))
     adv_rgb  = adv_rgba.permute(0, 3, 1, 2)
     mask_t   = mask.permute(0, 3, 1, 2)
-    comp     = torch.clamp(adv_rgb * mask_t + bg_hires * (1 - mask_t), 0.0, 1.0)
-    return comp
+    return torch.clamp(adv_rgb * mask_t + bg_hires * (1 - mask_t), 0.0, 1.0)
 
 
 def save_hires(tensor, path, hires=1024):
-    """将 [1,3,H,W] 的 tensor 转成 PIL 图像后保存，如有必要先上采样到 hires。"""
-    import torch.nn.functional as F
     if tensor.shape[-1] != hires or tensor.shape[-2] != hires:
         tensor = F.interpolate(tensor, size=(hires, hires), mode="bilinear", align_corners=False)
     arr = (tensor.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
@@ -463,8 +435,8 @@ def render_and_composite(renderer, bg_tensor, mvp, resolution=(256, 256), return
         clean_rgb = clean_rgba.permute(0, 3, 1, 2)
     else:
         adv_rgba, mask = renderer.render(mvp, resolution=resolution)
-    adv_rgb = adv_rgba.permute(0, 3, 1, 2)
-    mask_t  = mask.permute(0, 3, 1, 2)
+    adv_rgb  = adv_rgba.permute(0, 3, 1, 2)
+    mask_t   = mask.permute(0, 3, 1, 2)
     comp_adv = torch.clamp(adv_rgb * mask_t + bg_tensor * (1 - mask_t), 0.0, 1.0)
     if return_clean:
         comp_clean = torch.clamp(clean_rgb * mask_t + bg_tensor * (1 - mask_t), 0.0, 1.0)
@@ -530,8 +502,8 @@ def replace_image_in_processed_inputs(processed_inputs, adv_image_01, device, ve
         processed_inputs, verbose=verbose
     )
     adv_resized = _adapt_adv_image(adv_image_01, orig_tensor, value_range)
-    new_inputs = dict(processed_inputs)
-    img_val = new_inputs[img_top_key]
+    new_inputs  = dict(processed_inputs)
+    img_val     = new_inputs[img_top_key]
     if isinstance(img_val, dict):
         new_img_dict = dict(img_val)
         new_img_dict[cam_key] = adv_resized
@@ -554,45 +526,31 @@ def get_processed_inputs_and_observation(policy, raw_inputs_dict):
     return processed_inputs, observation, device
 
 
-# ---- 特征提取：分离图像与语言 embedding ----
-
 def extract_split_features(model, observation):
-    """
-    分别提取图像和语言 embedding，攻击只作用在图像 embedding 上。
-    返回:
-        img_embs:  [B, num_img_tokens, D]
-        lang_emb:  [B, num_lang_tokens, D]
-        lang_masks: [B, num_lang_tokens]
-    """
     images, img_masks, lang_tokens, lang_masks, state = model._preprocess_observation(
         observation, train=False
     )
-
     img_embs = []
     for img, img_mask in zip(images, img_masks):
         img_emb = model.paligemma_with_expert.embed_image(img)
         img_embs.append(img_emb)
-    img_embs = torch.cat(img_embs, dim=1)  # [B, num_img_tokens, D]
+    img_embs = torch.cat(img_embs, dim=1)
 
     lang_emb = model.paligemma_with_expert.embed_language_tokens(lang_tokens)
-    lang_emb = lang_emb * math.sqrt(lang_emb.shape[-1])  # scaling
+    lang_emb = lang_emb * math.sqrt(lang_emb.shape[-1])
 
     return img_embs, lang_emb, lang_masks
 
 
 def compute_image_feature_loss(model, adv_observation, clean_img_embs_detached):
-    """只在图像 embedding 上计算 MSE 损失，不涉及语言 embedding 和动作。"""
     adv_img_embs, _, _ = extract_split_features(model, adv_observation)
     D = adv_img_embs.shape[-1]
-    feat_loss = F.mse_loss(
+    return F.mse_loss(
         adv_img_embs.float(),
         clean_img_embs_detached.float(),
         reduction="mean"
     ) * D
-    return feat_loss
 
-
-# ---- 数据收集：只存图像特征，不再调用 policy.infer ----
 
 def collect_frame_data(policy, task, task_description, initial_obs_state,
                        num_frames, RENDER_RES, device, cfg, save_dir, episode_idx,
@@ -609,7 +567,7 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
     verbose_done = False
 
     for t in range(num_frames):
-        img_np    = get_libero_image(obs, RENDER_RES)
+        img_np     = get_libero_image(obs, RENDER_RES)
         raw_inputs = build_raw_inputs(obs, task_description)
 
         if cfg.save_attack_artifacts and t == 0:
@@ -617,15 +575,15 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
                 os.path.join(save_dir, f"Ep{episode_idx}_Original_F0.png")
             )
 
-        sim    = env.env.sim
-        hidden = hide_object_geoms(sim, search_keywords_list)
+        sim     = env.env.sim
+        hidden  = hide_object_geoms(sim, search_keywords_list)
         sim.forward()
-        obs_hidden = sim.render(camera_name="agentview", height=RENDER_RES, width=RENDER_RES)
+        obs_hidden  = sim.render(camera_name="agentview", height=RENDER_RES, width=RENDER_RES)
         bg_np_clean = obs_hidden[::-1, ::-1].copy()
         restore_object_geoms(sim, hidden)
 
         bg_tensor = (torch.from_numpy(bg_np_clean).float().to(device) / 255.0
-                     ).permute(2, 0, 1).unsqueeze(0)   # [1,3,H,W]
+                     ).permute(2, 0, 1).unsqueeze(0)
 
         model_matrix, body_id, found_name = get_target_model_matrix(env, search_keywords_list)
         if body_id != -1:
@@ -637,7 +595,6 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
 
         with torch.no_grad():
             processed_inputs, observation, _ = get_processed_inputs_and_observation(policy, raw_inputs)
-            # 只提取并保存图像 embedding
             clean_img_embs, _, _ = extract_split_features(model, observation)
             clean_img_embs = clean_img_embs.detach()
 
@@ -651,15 +608,13 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
             "bg_tensor":        bg_tensor,
             "mvp":              mvp,
             "processed_inputs": processed_inputs,
-            "clean_img_embs":   clean_img_embs,   # 只存图像特征
+            "clean_img_embs":   clean_img_embs,
         })
 
         obs, _, _, _ = env.step(get_libero_dummy_action())
 
     return env, frame_data
 
-
-# ---- 主攻击函数：只在图像特征层面优化 ----
 
 def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_state,
                                               task, task_description, save_dir, episode_idx,
@@ -720,11 +675,8 @@ def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_
             )
             adv_observation = _model.Observation.from_dict(new_inputs)
 
-            # 只在图像 embedding 上计算特征损失，不涉及语言和动作
             feat_loss  = compute_image_feature_loss(model, adv_observation, fdata["clean_img_embs"])
             nat_loss   = F.mse_loss(adv_diff, clean_diff)
-
-            # 最大化图像特征偏移，同时约束自然性
             total_loss = -lambda_feat * feat_loss + lambda_nat * nat_loss
             (total_loss / num_frames).backward()
 
@@ -765,7 +717,6 @@ def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_
                         )
                         break
 
-    # ---- 保存最终产物 ----
     if cfg.save_attack_artifacts:
         torch.save(
             renderer.get_texture_param().detach().cpu(),
@@ -779,12 +730,6 @@ def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_
         with torch.no_grad():
             for fdata in frame_data:
                 if fdata["mvp"] is not None:
-                    # 低分辨率版本（用于特征诊断等内部用途，不保存）
-                    adv_final = render_and_composite(
-                        renderer, fdata["bg_tensor"], fdata["mvp"],
-                        resolution=(RENDER_RES, RENDER_RES),
-                    )
-                    # 高分辨率版本用于可视化保存
                     adv_final_hires = render_hires(
                         renderer, fdata["bg_tensor"], fdata["mvp"],
                         hires=1024, render_res=RENDER_RES,
@@ -841,10 +786,10 @@ def evaluate_adversarial_policy(env, policy, renderer, task_description,
     else:
         print("[评估] ⚠️ 未找到目标纹理 ID，降级为 nvdiffrast 叠加方案")
 
-    device    = policy._pytorch_device
+    device     = policy._pytorch_device
     RENDER_RES = 256
-    success   = False
-    frames    = []
+    success    = False
+    frames     = []
 
     try:
         for step in tqdm.tqdm(range(max_steps), desc="评估中"):
@@ -864,7 +809,7 @@ def evaluate_adversarial_policy(env, policy, renderer, task_description,
                     bg = (torch.from_numpy(bg_np).float().to(device) / 255.0
                           ).permute(2, 0, 1).unsqueeze(0)
                     with torch.no_grad():
-                        adv   = render_and_composite(renderer, bg, mvp, resolution=(RENDER_RES, RENDER_RES))
+                        adv    = render_and_composite(renderer, bg, mvp, resolution=(RENDER_RES, RENDER_RES))
                         img_np = (adv.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
                 raw_inp = build_raw_inputs(obs, task_description, adv_image_np=img_np)
 
@@ -896,16 +841,13 @@ def evaluate_adversarial_policy(env, policy, renderer, task_description,
 
 @dataclass
 class GenerateConfig:
-    pretrained_checkpoint: str = (
-        "/home/dataset-assist-0/chenjiawei/hsm/openpi_cache/openpi-assets/checkpoints/pi05_libero_pytorch"
-    )
+    pretrained_checkpoint: str = "/path/to/checkpoints/pi05_libero_pytorch"
 
-    object_name: str = "akita_black_bowl"
+    object_name:           str          = "akita_black_bowl"
     override_mesh_path:    Optional[str] = None
     override_texture_path: Optional[str] = None
     override_xml_path:     Optional[str] = None
 
-    # ---- 攻击超参数 ----
     attack_iters: int   = 5000
     attack_lr:    float = 0.01
     num_frames:   int   = 1
@@ -913,16 +855,13 @@ class GenerateConfig:
     lambda_nat:   float = 0.01
 
     save_attack_artifacts: bool = True
-    local_log_dir: str = "/home/dataset-assist-0/experiments/pi0_attacks"
+    local_log_dir:         str  = "./experiments/pi0_attacks"
 
 
 @draccus.wrap()
 def run_whitebox_attack(cfg: GenerateConfig):
-    # ---- 解析物体配置 ----
     if cfg.object_name not in OBJECTS:
-        raise ValueError(
-            f"未知物体 '{cfg.object_name}'，可选: {list(OBJECTS.keys())}"
-        )
+        raise ValueError(f"未知物体 '{cfg.object_name}'，可选: {list(OBJECTS.keys())}")
     obj_cfg = OBJECTS[cfg.object_name]
 
     mesh_path    = cfg.override_mesh_path    or obj_cfg["mesh"]
@@ -939,11 +878,9 @@ def run_whitebox_attack(cfg: GenerateConfig):
     print(f"[配置] task_suite={task_suite}, task_id={task_id}")
     print(f"[配置] 搜索关键词: {search_kw}")
 
-    # ---- 从 XML 读取 scale ----
     scale_xyz = parse_mesh_scale(xml_path)
     print(f"[配置] mesh scale (from xml): {scale_xyz}")
 
-    # ---- 加载模型 ----
     print(f"\n加载 Pi0.5 checkpoint: {cfg.pretrained_checkpoint}")
     config = training_config.get_config("pi05_libero")
     import torch._dynamo
@@ -960,7 +897,6 @@ def run_whitebox_attack(cfg: GenerateConfig):
 
     device = policy._pytorch_device
 
-    # ---- 构建渲染器 ----
     renderer = DifferentiableRenderer(
         mesh_path=mesh_path,
         orig_texture_path=texture_path,
@@ -968,10 +904,9 @@ def run_whitebox_attack(cfg: GenerateConfig):
         scale_xyz=scale_xyz,
     ).to(device)
 
-    # ---- 加载任务 ----
-    benchmark_dict  = benchmark.get_benchmark_dict()
-    task_suite_obj  = benchmark_dict[task_suite]()
-    train_task      = task_suite_obj.get_task(task_id)
+    benchmark_dict    = benchmark.get_benchmark_dict()
+    task_suite_obj    = benchmark_dict[task_suite]()
+    train_task        = task_suite_obj.get_task(task_id)
     train_init_states = task_suite_obj.get_task_init_states(task_id)
     _, train_task_desc = _get_libero_env(train_task, resolution=256)
 
