@@ -3,11 +3,11 @@ os.environ["TORCHDYNAMO_DISABLE"] = "1"
 import sys
 import math
 import time
+import random
 import xml.etree.ElementTree as ET
-import dataclasses
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Literal, List, Optional
+from dataclasses import dataclass
+from typing import List, Optional
 
 import numpy as np
 import tqdm
@@ -19,6 +19,7 @@ import torch.nn.functional as F
 import trimesh
 import nvdiffrast.torch as dr
 import draccus
+from omegaconf import OmegaConf
 
 PATH_TO_LIBERO_ROOT = "/path/to/LIBERO"
 if PATH_TO_LIBERO_ROOT not in sys.path:
@@ -542,14 +543,152 @@ def extract_split_features(model, observation):
     return img_embs, lang_emb, lang_masks
 
 
-def compute_image_feature_loss(model, adv_observation, clean_img_embs_detached):
-    adv_img_embs, _, _ = extract_split_features(model, adv_observation)
-    D = adv_img_embs.shape[-1]
-    return F.mse_loss(
-        adv_img_embs.float(),
-        clean_img_embs_detached.float(),
-        reduction="mean"
-    ) * D
+def _extract_first_action(policy_output):
+    action = policy_output["actions"] if isinstance(policy_output, dict) else policy_output
+    if isinstance(action, torch.Tensor):
+        action = action.detach().cpu().numpy()
+    action = np.asarray(action)
+    if action.ndim == 3:
+        action = action[0, 0]
+    elif action.ndim == 2:
+        action = action[0]
+    return torch.from_numpy(action.astype(np.float32))
+
+
+def load_latent_encoder(config_path, ckpt_path, device):
+    for taming_root in [Path("./taming-transformers"), Path("./taming-transformers-master")]:
+        if taming_root.exists():
+            s = str(taming_root.resolve())
+            if s not in sys.path:
+                sys.path.insert(0, s)
+            break
+
+    from taming.models.vqgan import VQModel
+
+    cfg = OmegaConf.load(config_path)
+    model_cfg = cfg.model.params if "model" in cfg and "params" in cfg.model else cfg.model
+    latent_model = VQModel(**model_cfg)
+
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    state_dict = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
+    latent_model.load_state_dict(state_dict, strict=False)
+    latent_model.eval().to(device)
+    for p in latent_model.parameters():
+        p.requires_grad = False
+    return latent_model.encoder
+
+
+def extract_latent(encoder, img_np, device):
+    img = Image.fromarray(img_np).resize((256, 256))
+    x = torch.from_numpy(np.asarray(img).astype(np.float32) / 255.0).to(device)
+    x = x.permute(2, 0, 1).unsqueeze(0) * 2.0 - 1.0
+    with torch.no_grad():
+        feat = encoder(x).mean(dim=[2, 3]).squeeze(0)
+    return feat.detach()
+
+
+def compute_frame_weights(latent_features: List[torch.Tensor], tau: float) -> torch.Tensor:
+    if len(latent_features) == 0:
+        return torch.tensor([], dtype=torch.float32)
+    if len(latent_features) == 1:
+        return torch.ones(1, dtype=torch.float32)
+
+    feats  = [f.detach().float() for f in latent_features]
+    device = feats[0].device
+    n      = len(feats)
+
+    v = torch.zeros(n, device=device)
+    a = torch.zeros(n, device=device)
+    for t in range(1, n):
+        v[t] = torch.norm(feats[t] - feats[t - 1], p=2) / 2.0
+    for t in range(1, n):
+        a[t] = torch.abs(v[t] - v[t - 1])
+
+    def _minmax(x):
+        return (x - x.min()) / torch.clamp(x.max() - x.min(), min=1e-8)
+
+    s = torch.maximum(_minmax(v), _minmax(a))
+    w = torch.softmax(s / float(max(tau, 1e-6)), dim=0)
+    return w.detach()
+
+
+def _gaussian_kernel2d(kernel_size: int, sigma: float, device, dtype):
+    radius = kernel_size // 2
+    x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
+    g = torch.exp(-0.5 * (x / sigma) ** 2)
+    g = g / g.sum()
+    k2d = torch.outer(g, g)
+    return k2d / k2d.sum()
+
+
+def apply_eot_transforms(img_tensor: torch.Tensor, num_samples: int) -> torch.Tensor:
+    if img_tensor.dim() != 4 or img_tensor.shape[0] != 1:
+        raise ValueError(f"Expected [1,3,H,W], got {tuple(img_tensor.shape)}")
+    device, dtype = img_tensor.device, img_tensor.dtype
+    outs = []
+    for _ in range(num_samples):
+        y = img_tensor
+        b = random.uniform(-0.2, 0.2)
+        c = random.uniform(0.8, 1.2)
+        mean = y.mean(dim=(2, 3), keepdim=True)
+        y = (y - mean) * c + mean + b
+        k     = random.choice([3, 5])
+        sigma = random.uniform(0.5, 1.5)
+        kern  = _gaussian_kernel2d(k, sigma, device=device, dtype=dtype)
+        kern  = kern.view(1, 1, k, k).repeat(3, 1, 1, 1)
+        y = F.conv2d(y, kern, padding=k // 2, groups=3)
+        y = torch.clamp(y, 0.0, 1.0)
+        outs.append(y.squeeze(0))
+    return torch.stack(outs, dim=0)
+
+
+def perturb_mvp(
+    mvp: torch.Tensor,
+    rot_std_deg: float = 5.0,
+    trans_std: float   = 0.02,
+    scale_range: tuple = (0.9, 1.1),
+) -> torch.Tensor:
+    device, dtype = mvp.device, mvp.dtype
+    angles = torch.randn(3, device=device, dtype=dtype) * math.radians(rot_std_deg)
+    cx, cy, cz = torch.cos(angles[0]), torch.cos(angles[1]), torch.cos(angles[2])
+    sx, sy, sz = torch.sin(angles[0]), torch.sin(angles[1]), torch.sin(angles[2])
+
+    Rx = torch.eye(4, device=device, dtype=dtype)
+    Rx[1, 1] = cx;  Rx[1, 2] = -sx
+    Rx[2, 1] = sx;  Rx[2, 2] =  cx
+
+    Ry = torch.eye(4, device=device, dtype=dtype)
+    Ry[0, 0] = cy;  Ry[0, 2] =  sy
+    Ry[2, 0] = -sy; Ry[2, 2] =  cy
+
+    Rz = torch.eye(4, device=device, dtype=dtype)
+    Rz[0, 0] = cz;  Rz[0, 1] = -sz
+    Rz[1, 0] = sz;  Rz[1, 1] =  cz
+
+    T = torch.eye(4, device=device, dtype=dtype)
+    T[:3, 3] = torch.randn(3, device=device, dtype=dtype) * trans_std
+
+    scale = random.uniform(*scale_range)
+    S = torch.eye(4, device=device, dtype=dtype)
+    S[0, 0] = S[1, 1] = S[2, 2] = scale
+
+    return mvp @ Rz @ Ry @ Rx @ T @ S
+
+
+# ------------------------------------------------------------------ #
+#  核心：直接在图像 tensor 上注入对抗图，保持完整梯度链               #
+#  adv_img_01: [1,3,H,W]  float32  [0,1]，有梯度                     #
+#  返回带梯度的 img_embs  [B, N_tokens, D]                           #
+# ------------------------------------------------------------------ #
+def _adv_img_to_embs(policy, adv_img_01: torch.Tensor,
+                     processed_inputs: dict, device: str) -> torch.Tensor:
+    new_inputs, _, _ = replace_image_in_processed_inputs(
+        processed_inputs, adv_img_01, device, verbose=False
+    )
+    adv_obs = _model.Observation.from_dict(new_inputs)
+    # 不加 no_grad，梯度从 adv_img_01 → new_inputs → embed_image → img_embs
+    img_embs, _, _ = extract_split_features(policy._model, adv_obs)
+    return img_embs
 
 
 def collect_frame_data(policy, task, task_description, initial_obs_state,
@@ -562,7 +701,11 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
     obs = env.set_init_state(initial_obs_state)
     env.env.sim.forward()
 
-    print(f"[攻击] 收集 {num_frames} 帧数据并预计算干净图像特征...")
+    print(f"[攻击] 收集 {num_frames} 帧数据...")
+    latent_encoder = load_latent_encoder(
+        cfg.latent_encoder_config, cfg.latent_encoder_ckpt, device
+    )
+
     frame_data   = []
     verbose_done = False
 
@@ -575,14 +718,14 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
                 os.path.join(save_dir, f"Ep{episode_idx}_Original_F0.png")
             )
 
-        sim     = env.env.sim
-        hidden  = hide_object_geoms(sim, search_keywords_list)
+        sim    = env.env.sim
+        hidden = hide_object_geoms(sim, search_keywords_list)
         sim.forward()
-        obs_hidden  = sim.render(camera_name="agentview", height=RENDER_RES, width=RENDER_RES)
-        bg_np_clean = obs_hidden[::-1, ::-1].copy()
+        obs_h   = sim.render(camera_name="agentview", height=RENDER_RES, width=RENDER_RES)
+        bg_np   = obs_h[::-1, ::-1].copy()
         restore_object_geoms(sim, hidden)
 
-        bg_tensor = (torch.from_numpy(bg_np_clean).float().to(device) / 255.0
+        bg_tensor = (torch.from_numpy(bg_np).float().to(device) / 255.0
                      ).permute(2, 0, 1).unsqueeze(0)
 
         model_matrix, body_id, found_name = get_target_model_matrix(env, search_keywords_list)
@@ -590,13 +733,17 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
             print(f"  [帧 {t}] 找到目标 body: '{found_name}'")
             mvp = build_mvp(env, model_matrix, resolution=(RENDER_RES, RENDER_RES))
         else:
-            print(f"  [帧 {t}] 未找到目标 body，跳过该帧渲染")
+            print(f"  [帧 {t}] 未找到目标 body")
             mvp = None
 
         with torch.no_grad():
-            processed_inputs, observation, _ = get_processed_inputs_and_observation(policy, raw_inputs)
+            processed_inputs, observation, _ = get_processed_inputs_and_observation(
+                policy, raw_inputs
+            )
             clean_img_embs, _, _ = extract_split_features(model, observation)
             clean_img_embs = clean_img_embs.detach()
+            clean_action   = _extract_first_action(policy.infer(raw_inputs))
+            latent_feat    = extract_latent(latent_encoder, img_np, device)
 
         if not verbose_done:
             print(f"  [特征] clean_img_embs shape={clean_img_embs.shape}, "
@@ -609,6 +756,9 @@ def collect_frame_data(policy, task, task_description, initial_obs_state,
             "mvp":              mvp,
             "processed_inputs": processed_inputs,
             "clean_img_embs":   clean_img_embs,
+            "clean_action":     clean_action,
+            "latent_feat":      latent_feat,
+            "raw_inputs":       raw_inputs,
         })
 
         obs, _, _, _ = env.step(get_libero_dummy_action())
@@ -625,22 +775,38 @@ def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_
     model      = policy._model
     device     = policy._pytorch_device
 
-    print(f"[攻击] 图像特征空间攻击 | 模型: {type(model).__name__}, Device: {device}")
+    print(f"[攻击] TAAO | 模型: {type(model).__name__}, Device: {device}")
     print(f"[攻击] 攻击目标关键词: {search_keywords_list}")
 
     for param in model.parameters():
         param.requires_grad = False
     model.eval()
 
-    lambda_feat = getattr(cfg, "lambda_feat", 1.0)
-    lambda_nat  = getattr(cfg, "lambda_nat",  0.1)
-    num_frames  = getattr(cfg, "num_frames",  5)
+    num_frames = getattr(cfg, "num_frames", 5)
+    lambda_nat = getattr(cfg, "lambda_nat", 0.1)
 
     env, frame_data = collect_frame_data(
         policy, task, task_description, initial_obs_state,
         num_frames, RENDER_RES, device, cfg, save_dir, episode_idx,
         search_keywords_list=search_keywords_list,
     )
+
+    frame_weights = compute_frame_weights(
+        [f["latent_feat"] for f in frame_data], tau=cfg.tau
+    )
+    print(f"[攻击] 关键帧权重: {frame_weights.cpu().numpy().round(4).tolist()}")
+
+    # 梯度诊断：确认 _preprocess_observation 不截断梯度
+    _diag_img = torch.zeros(1, 3, RENDER_RES, RENDER_RES,
+                            device=device, requires_grad=True)
+    _diag_inputs, _, _ = replace_image_in_processed_inputs(
+        frame_data[0]["processed_inputs"], _diag_img, device
+    )
+    _diag_obs  = _model.Observation.from_dict(_diag_inputs)
+    _diag_embs, _, _ = extract_split_features(model, _diag_obs)
+    print(f"[诊断] img_embs.requires_grad = {_diag_embs.requires_grad}  "
+          f"（必须为 True，否则梯度在 _preprocess_observation 内断裂）")
+    del _diag_img, _diag_inputs, _diag_obs, _diag_embs
 
     optimizer = torch.optim.Adam([renderer.get_texture_param()], lr=cfg.attack_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -650,101 +816,126 @@ def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_
     loss_history  = []
     grad_log_path = os.path.join(save_dir, f"Ep{episode_idx}_gradient_log.txt")
     with open(grad_log_path, "w") as f:
-        f.write("Iter | Total Loss | Feat Loss | Nat Loss | Grad Norm | LR\n")
+        f.write("Iter | Total Loss | TAAO Loss | Nat Loss | Grad Norm | LR\n")
 
-    print(f"\n[攻击] 开始图像特征空间优化，共 {num_iters} 轮...")
-    iterator = tqdm.tqdm(range(num_iters), desc="Image Feature Attack", leave=False)
+    print(f"\n[攻击] 开始优化，共 {num_iters} 轮...")
+    iterator = tqdm.tqdm(range(num_iters), desc="TAAO Attack", leave=False)
 
     for i in iterator:
         optimizer.zero_grad()
-        avg_feat = avg_nat = avg_total = 0.0
+        avg_taao = avg_nat = avg_total = 0.0
         valid = 0
 
-        for fdata in frame_data:
+        for t, fdata in enumerate(frame_data):
             if fdata["mvp"] is None:
                 continue
 
+            # --- 渲染 ---
             adv_diff, clean_diff = render_and_composite(
                 renderer, fdata["bg_tensor"], fdata["mvp"],
                 resolution=(RENDER_RES, RENDER_RES), return_clean=True,
             )
+            nat_loss = F.mse_loss(adv_diff, clean_diff)
 
-            new_inputs, _, _ = replace_image_in_processed_inputs(
-                fdata["processed_inputs"], adv_diff, device,
-                verbose=(i == 0 and valid == 0)
-            )
-            adv_observation = _model.Observation.from_dict(new_inputs)
+            # --- 构造 EoT 样本列表（全程保持梯度） ---
+            if cfg.use_eot:
+                imgs_for_loss = []
+                for _ in range(cfg.eot_num_samples):
+                    mvp_p = perturb_mvp(
+                        fdata["mvp"],
+                        rot_std_deg=cfg.eot_rot_std_deg,
+                        trans_std=cfg.eot_trans_std,
+                        scale_range=(cfg.eot_scale_min, cfg.eot_scale_max),
+                    )
+                    adv_rgba_p, mask_p = renderer.render(mvp_p, resolution=(RENDER_RES, RENDER_RES))
+                    adv_p = torch.clamp(
+                        adv_rgba_p.permute(0, 3, 1, 2) * mask_p.permute(0, 3, 1, 2)
+                        + fdata["bg_tensor"] * (1 - mask_p.permute(0, 3, 1, 2)),
+                        0.0, 1.0,
+                    )
+                    # 2D 增强：单次，保持梯度（不调 clone，直接算）
+                    b = random.uniform(-0.2, 0.2)
+                    c = random.uniform(0.8, 1.2)
+                    m = adv_p.mean(dim=(2, 3), keepdim=True)
+                    adv_p = torch.clamp((adv_p - m) * c + m + b, 0.0, 1.0)
+                    imgs_for_loss.append(adv_p)
+            else:
+                imgs_for_loss = [adv_diff]
 
-            feat_loss  = compute_image_feature_loss(model, adv_observation, fdata["clean_img_embs"])
-            nat_loss   = F.mse_loss(adv_diff, clean_diff)
-            total_loss = -lambda_feat * feat_loss + lambda_nat * nat_loss
+            # --- TAAO loss（梯度从 img_embs 回传到 adv_vc_noise） ---
+            taao_sample_losses = []
+            for img_k in imgs_for_loss:
+                img_embs = _adv_img_to_embs(policy, img_k, fdata["processed_inputs"], device)
+                proxy    = img_embs.mean(dim=1)
+                clean_proxy = fdata["clean_img_embs"].mean(dim=1).to(device).detach()
+
+                if cfg.attack_mode == "untargeted":
+                    taao_k = -F.mse_loss(proxy, clean_proxy)
+                elif cfg.attack_mode == "targeted":
+                    taao_k = F.mse_loss(proxy, -clean_proxy)
+                else:
+                    raise ValueError(f"Unsupported attack_mode: {cfg.attack_mode}")
+                taao_sample_losses.append(taao_k)
+
+            taao_loss  = torch.stack(taao_sample_losses).mean()
+            total_loss = frame_weights[t].to(device) * taao_loss + lambda_nat * nat_loss
             (total_loss / num_frames).backward()
 
-            avg_feat  += feat_loss.item()
+            avg_taao  += taao_loss.item()
             avg_nat   += nat_loss.item()
             avg_total += total_loss.item()
             valid += 1
 
         if valid > 0:
-            avg_feat  /= valid
+            avg_taao  /= valid
             avg_nat   /= valid
             avg_total /= valid
-            loss_history.append(avg_total)
+        loss_history.append(avg_total)
 
         grad       = renderer.adv_vc_noise.grad
         g_norm     = grad.norm().item() if grad is not None else 0.0
         current_lr = optimizer.param_groups[0]["lr"]
         with open(grad_log_path, "a") as f:
-            f.write(f"{i:02d} | {avg_total:.6f} | {avg_feat:.6f} | {avg_nat:.6f} "
+            f.write(f"{i:02d} | {avg_total:.6f} | {avg_taao:.6f} | {avg_nat:.6f} "
                     f"| {g_norm:.6e} | {current_lr:.6e}\n")
 
         optimizer.step()
         scheduler.step()
-        iterator.set_postfix(ImgFeat=f"{avg_feat:.3f}", Nat=f"{avg_nat:.4f}", GNorm=f"{g_norm:.4f}")
+        iterator.set_postfix(TAAO=f"{avg_taao:.4f}", Nat=f"{avg_nat:.4f}", GNorm=f"{g_norm:.4f}")
 
         if cfg.save_attack_artifacts and (i + 1) % 10 == 0:
             with torch.no_grad():
                 for fdata in frame_data:
                     if fdata["mvp"] is not None:
-                        adv_vis_hires = render_hires(
-                            renderer, fdata["bg_tensor"], fdata["mvp"],
-                            hires=1024, render_res=RENDER_RES,
-                        )
                         save_hires(
-                            adv_vis_hires,
+                            render_hires(renderer, fdata["bg_tensor"], fdata["mvp"]),
                             os.path.join(save_dir, f"Ep{episode_idx}_AdvRender_iter{i+1:03d}.png"),
-                            hires=1024,
                         )
                         break
 
+    # --- 保存产物 ---
     if cfg.save_attack_artifacts:
         torch.save(
             renderer.get_texture_param().detach().cpu(),
             os.path.join(save_dir, f"Ep{episode_idx}_Texture_Noise.pt"),
         )
-        final_tex = renderer.get_baked_adv_texture()
         Image.fromarray(
-            (final_tex.squeeze().cpu().numpy() * 255).astype(np.uint8)
+            (renderer.get_baked_adv_texture().squeeze().cpu().numpy() * 255).astype(np.uint8)
         ).save(os.path.join(save_dir, f"Ep{episode_idx}_UV_Map.png"))
 
         with torch.no_grad():
             for fdata in frame_data:
                 if fdata["mvp"] is not None:
-                    adv_final_hires = render_hires(
-                        renderer, fdata["bg_tensor"], fdata["mvp"],
-                        hires=1024, render_res=RENDER_RES,
-                    )
                     save_hires(
-                        adv_final_hires,
+                        render_hires(renderer, fdata["bg_tensor"], fdata["mvp"]),
                         os.path.join(save_dir, f"Ep{episode_idx}_AdvRender_Final.png"),
-                        hires=1024,
                     )
                     break
 
         np.save(os.path.join(save_dir, f"Ep{episode_idx}_loss_history.npy"),
                 np.array(loss_history))
 
-        print("\n[诊断] 最终图像特征偏移量（越大表示攻击越有效）:")
+        print("\n[诊断] 最终图像特征偏移量:")
         with torch.no_grad():
             for t, fdata in enumerate(frame_data):
                 if fdata["mvp"] is not None:
@@ -756,8 +947,8 @@ def train_adversarial_texture_feature_attack(cfg, policy, renderer, initial_obs_
                         fdata["processed_inputs"], adv_final, device
                     )
                     adv_obs = _model.Observation.from_dict(new_inputs)
-                    adv_img_embs, _, _ = extract_split_features(model, adv_obs)
-                    delta = (adv_img_embs - fdata["clean_img_embs"]).norm(dim=-1).mean().item()
+                    adv_embs, _, _ = extract_split_features(model, adv_obs)
+                    delta = (adv_embs - fdata["clean_img_embs"]).norm(dim=-1).mean().item()
                     print(f"  帧 {t}: 图像特征 L2 偏移 = {delta:.4f}")
 
     return env, loss_history
@@ -843,19 +1034,32 @@ def evaluate_adversarial_policy(env, policy, renderer, task_description,
 class GenerateConfig:
     pretrained_checkpoint: str = "/path/to/checkpoints/pi05_libero_pytorch"
 
-    object_name:           str          = "akita_black_bowl"
+    object_name:           str           = "akita_black_bowl"
     override_mesh_path:    Optional[str] = None
     override_texture_path: Optional[str] = None
     override_xml_path:     Optional[str] = None
 
     attack_iters: int   = 5000
     attack_lr:    float = 0.01
-    num_frames:   int   = 1
-    lambda_feat:  float = 1.0
+    num_frames:   int   = 5
     lambda_nat:   float = 0.01
 
     save_attack_artifacts: bool = True
-    local_log_dir:         str  = "./experiments/pi05_attacks"
+    local_log_dir:         str  = "./experiments/pi0_attacks"
+
+    latent_encoder_config: str  = "./taming-transformers/configs/vqgan_imagenet_f16_16384.yaml"
+    latent_encoder_ckpt:   str  = "./taming-transformers/checkpoints/vqgan_imagenet_f16_16384.ckpt"
+    tau:                   float = 1.0
+
+    attack_mode:        str = "untargeted"
+    target_action_mode: str = "sign_flip_xyz"
+
+    use_eot:         bool  = False
+    eot_num_samples: int   = 4
+    eot_rot_std_deg: float = 5.0
+    eot_trans_std:   float = 0.02
+    eot_scale_min:   float = 0.9
+    eot_scale_max:   float = 1.1
 
 
 @draccus.wrap()
@@ -879,7 +1083,7 @@ def run_whitebox_attack(cfg: GenerateConfig):
     print(f"[配置] 搜索关键词: {search_kw}")
 
     scale_xyz = parse_mesh_scale(xml_path)
-    print(f"[配置] mesh scale (from xml): {scale_xyz}")
+    print(f"[配置] mesh scale: {scale_xyz}")
 
     print(f"\n加载 Pi0.5 checkpoint: {cfg.pretrained_checkpoint}")
     config = training_config.get_config("pi05_libero")
@@ -892,7 +1096,6 @@ def run_whitebox_attack(cfg: GenerateConfig):
         checkpoint_dir=cfg.pretrained_checkpoint,
     )
     policy._model.float()
-
     assert policy._is_pytorch_model, "需要 PyTorch 版本的 checkpoint！"
 
     device = policy._pytorch_device
@@ -913,7 +1116,7 @@ def run_whitebox_attack(cfg: GenerateConfig):
     DATE_TIME    = time.strftime("%Y%m%d_%H%M%S")
     artifact_dir = os.path.join(cfg.local_log_dir, f"attack_{cfg.object_name}_{DATE_TIME}")
 
-    print(f"\n开始图像特征空间攻击: [{train_task_desc}]")
+    print(f"\n开始攻击: [{train_task_desc}]")
     env, loss_history = train_adversarial_texture_feature_attack(
         cfg, policy, renderer, train_init_states[0],
         train_task, train_task_desc, artifact_dir, episode_idx=0,
