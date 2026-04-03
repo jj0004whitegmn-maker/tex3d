@@ -293,27 +293,6 @@ python experiments/robot/libero/attack_openvla.py \
     --n_trials 50
 ```
 
----
-
-## 🌍 Physical World Experiments
-
-For real-robot deployment on a **Franka Emika Panda** manipulator:
-
-1. Print adversarial objects using a 3D printer (STL files provided in `experiments/robot/`)
-2. Set up a monocular RGB camera
-3. Run with EoT enabled for sim-to-real transfer:
-
-```bash
-python experiments/robot/libero/attack_openvla.py \
-    --use_eot True \
-    --eot_brightness 0.3 \
-    --eot_contrast 0.3 \
-    --eot_blur_radius 2 \
-    --task_suite spatial \
-    --output_dir outputs/physical_world
-```
-
----
 
 ## 📐 Perturbation Levels
 
